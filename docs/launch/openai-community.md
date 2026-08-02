@@ -14,9 +14,9 @@ deployment details, and producing installation and contributor documentation. Hu
 checks remained essential for physical video/audio quality, browser behavior, and deciding which
 local infrastructure details must stay private.
 
-The public candidate is intentionally honest about its boundary: current physical validation is
-one MS210x/PAL setup on Ubuntu Server 24.04/amd64; NTSC and arm64 are synthetic/build validations;
-there is no public adoption data yet; and v0.1.0 has no built-in authentication. The project is not
-endorsed by OpenAI.
+The v0.1.0 release is intentionally honest about its boundary: current physical validation is one
+EasierCAP-branded MS210x/PAL setup on Ubuntu Server 24.04/amd64; NTSC and ARM64 are synthetic/build
+validations; there is no claimed public adoption data; and v0.1.0 has no built-in authentication.
+The project is not endorsed by OpenAI.
 
 Repository: https://github.com/paulcakeface/vhscribe

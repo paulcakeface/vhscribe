@@ -33,9 +33,9 @@ retained responsibility for physical-signal and user-interface acceptance testin
 
 ## Current adoption
 
-As of the v0.1.0 release candidate, the project has one private reference deployment. It has not yet
-been publicly released, and there are no claimed external users, installations, stars, or outside
-contributors. Physical testing is limited to a MacroSilicon MS210x with PAL input on Ubuntu Server
+At the v0.1.0 launch, the project has one private reference deployment. There are no claimed
+external users, installations, stars, or outside contributors. Physical testing is limited to an
+EasierCAP-branded adapter identified as MacroSilicon MS210x, with PAL input on Ubuntu Server
 24.04/amd64.
 
 ## Maintenance plan

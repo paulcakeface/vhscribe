@@ -1,6 +1,7 @@
-# Mastodon / Bluesky draft
+# Ready to post — Mastodon / Bluesky
 
-VHScribe is a local-first web control panel for digitising VHS on a headless Linux server: WebRTC
-preview, one supervised FFmpeg capture process, native PAL/NTSC dimensions, and non-destructive MKV
-recovery. Docker Compose; MS210x/PAL currently tested. Built with extensive Codex assistance—no
-OpenAI endorsement. https://github.com/paulcakeface/vhscribe
+VHScribe is open-source VHS capture for headless Linux: WebRTC preview, server-side recording and
+MKV recovery. Tested on real EasierCAP/MS210x hardware; built with extensive Codex help (no OpenAI
+endorsement). More devices, NTSC and ARM64 testers welcome.
+
+https://github.com/paulcakeface/vhscribe

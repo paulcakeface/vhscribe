@@ -82,8 +82,10 @@ change `VIDEO_DEVICE` in `.env`; Compose uses that path for both sides of the ma
 
 ## Compatibility reporting
 
-The maintainers have confirmed a MacroSilicon MS210x on Ubuntu Server 24.04 with PAL input. For any
-other combination, use the hardware compatibility issue template and distinguish:
+The maintainers have confirmed an EasierCAP-branded adapter identified by Linux as MacroSilicon
+MS210x on Ubuntu Server 24.04/amd64 with PAL input. Product labels are reused across different
+chipsets, so this result does not establish compatibility for every EasyCAP or EasierCAP device.
+For any other combination, use the hardware compatibility issue template and distinguish:
 
 - the product label from USB and driver identity;
 - advertised formats from a successful recording;

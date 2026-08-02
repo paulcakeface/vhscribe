@@ -15,10 +15,12 @@ Notable user-facing changes are documented here. This project follows
 ### Added
 
 - Browser dashboard for preview, recording control, disk status, and recent captures.
+- Server-side recording that continues independently of the controlling browser.
 - Low-latency WebRTC preview through MediaMTX.
 - PAL and NTSC profiles with native encoded dimensions and explicit 4:3 display signaling.
 - Non-destructive interrupted-MKV recovery.
-- Read-only hardware discovery in the CLI and dashboard.
+- Read-only hardware discovery in the CLI and dashboard, tested with an EasierCAP-branded
+  MacroSilicon MS210x adapter.
 - Private-by-default environment configuration and hardened Docker Compose deployment.
 - Synthetic capture tests, CI, multi-architecture build checks, and public project documentation.
 

@@ -2,7 +2,7 @@
 
 ## Description
 
-Local-first web control panel for headless VHS capture with FFmpeg, MediaMTX, and Docker Compose.
+Self-hosted, browser-controlled VHS capture for headless Linux servers, powered by FFmpeg, MediaMTX and WebRTC.
 
 ## Suggested topics
 

@@ -1,16 +1,18 @@
 # VHScribe
 
-Browser-controlled, local-first VHS capture for a headless Linux server.
+Self-hosted, browser-controlled VHS capture for headless Linux servers, powered by FFmpeg,
+MediaMTX and WebRTC.
+
+![VHScribe dashboard showing a synthetic colour-bar preview, server-side recording controls, elapsed time, output size, and capture status](docs/images/vhscribe-dashboard.png)
 
 [![CI](https://github.com/paulcakeface/vhscribe/actions/workflows/ci.yml/badge.svg)](https://github.com/paulcakeface/vhscribe/actions/workflows/ci.yml)
 [![Container build](https://github.com/paulcakeface/vhscribe/actions/workflows/container.yml/badge.svg)](https://github.com/paulcakeface/vhscribe/actions/workflows/container.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-![VHScribe dashboard showing a synthetic colour-bar preview, recording controls, and capture status](docs/images/vhscribe-dashboard.png)
-
 VHScribe gives a USB capture card a simple web interface: preview the signal, name a tape,
-record an H.264/AAC Matroska master, and recover interrupted captures. It is designed for a
-trusted home network and keeps media on storage you control.
+record an H.264/AAC Matroska master on the server even if the browser disconnects, and recover
+interrupted captures. It is designed for a trusted home network and keeps media on storage you
+control.
 
 ## Key features
 
@@ -44,7 +46,8 @@ the preview over WebRTC. See [the detailed architecture](docs/architecture.md).
 Confirmed on the current reference system:
 
 - Ubuntu Server 24.04 on `linux/amd64`
-- MacroSilicon MS210x USB capture hardware using the Linux `uvcvideo` driver
+- An EasierCAP-branded USB adapter identified by Linux as MacroSilicon MS210x and using the
+  `uvcvideo` driver
 - PAL composite video at 720×576 and ALSA stereo audio
 - Docker Engine 29 with Docker Compose v2
 
@@ -80,7 +83,7 @@ sudo usermod -aG docker "$USER"
 Log out and back in after changing group membership. Docker group membership is effectively
 root-level access; using `sudo docker ...` instead is a valid alternative.
 
-## Quick start
+## Quick Start
 
 ```bash
 git clone https://github.com/paulcakeface/vhscribe.git
