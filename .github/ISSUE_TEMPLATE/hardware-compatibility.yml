@@ -1,0 +1,39 @@
+name: Hardware compatibility report
+description: Report an evidence-backed capture-card result.
+title: "[Hardware]: "
+labels: [hardware]
+body:
+  - type: markdown
+    attributes:
+      value: Do not upload private footage, `.env`, LAN details, paths, or USB serial numbers.
+  - type: textarea
+    id: system
+    attributes:
+      label: System and adapter
+      description: OS, architecture, product/chip label, Linux driver; redact serial numbers.
+    validations:
+      required: true
+  - type: textarea
+    id: modes
+    attributes:
+      label: Capture mode
+      description: PAL/NTSC, V4L2 endpoint mode, ALSA source format, and cabling type.
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Preview and recording passed
+        - Preview only passed
+        - Did not work
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Privacy-safe evidence
+      description: Test duration, ffprobe summary, and redacted errors. Synthetic footage is welcome.
+    validations:
+      required: true

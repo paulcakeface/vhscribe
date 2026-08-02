@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible VHScribe problem without private media or configuration.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Do not attach recordings, `.env`, LAN addresses, paths, or USB serial numbers. Prefer a
+        synthetic reproduction and redact logs before posting.
+  - type: input
+    id: version
+    attributes:
+      label: VHScribe version or commit
+      placeholder: v0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: input
+    attributes:
+      label: Input used
+      options:
+        - Synthetic capture
+        - Physical capture hardware
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Redacted environment
+      description: OS, CPU architecture, Docker/Compose versions, browser, PAL/NTSC.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Privacy and validation
+      options:
+        - label: I ran the verification script or explained why it could not run.
+          required: true
+        - label: I removed private media, names, paths, addresses, serials, and secrets.
+          required: true

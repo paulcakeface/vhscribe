@@ -1,0 +1,80 @@
+name: Manual container release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Approved SemVer tag (for example v0.1.0)"
+        required: true
+        default: v0.1.0
+        type: string
+      publish:
+        description: "Publish the multi-architecture image to GHCR"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: '[[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+      - name: Enable emulation
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Authenticate to GHCR
+        if: inputs.publish
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate OCI metadata
+        id: metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/vhscribe
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=VHScribe
+            org.opencontainers.image.description=Local-first VHS capture control panel
+            org.opencontainers.image.licenses=MIT
+      - name: Build release candidate
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ inputs.publish }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ inputs.version }}
+            VCS_REF=${{ github.sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest published image provenance
+        if: inputs.publish
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/vhscribe
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: State dry-run outcome
+        if: ${{ !inputs.publish }}
+        run: echo "Build completed without publishing. Re-run with publish=true only after approval."

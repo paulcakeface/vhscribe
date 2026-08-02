@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install development dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Check formatting
+        run: ruff format --check .
+      - name: Lint Python
+        run: ruff check .
+      - name: Run unit tests
+        run: pytest -q
+      - name: Audit Python dependencies
+        run: pip-audit -r requirements.txt
+      - name: Validate Compose model
+        run: |
+          cp .env.example .env
+          sed -i "s/^PUID=.*/PUID=$(id -u)/; s/^PGID=.*/PGID=$(id -g)/" .env
+          docker compose config --quiet
+      - name: Check shell scripts
+        run: >-
+          docker run --rm --entrypoint sh -v "$PWD:/mnt:ro"
+          koalaman/shellcheck-alpine:v0.11.0 -c 'shellcheck /mnt/scripts/*.sh'
+      - name: Check local documentation links
+        run: python scripts/check-doc-links.py
+      - name: Check external documentation links
+        run: |
+          mapfile -d '' markdown_files < <(find . -path './.git' -prune -o -name '*.md' -print0)
+          docker run --rm -v "$PWD:/input:ro" -w /input lycheeverse/lychee:0.24.2 \
+            --no-progress --exclude 'https://github.com/paulcakeface/vhscribe.*' \
+            --accept '200,429' "${markdown_files[@]}"
+      - name: Scan current tree and Git history for secrets
+        run: >-
+          docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.30.1
+          git /repo --redact --verbose
+
+  synthetic-capture:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start synthetic stack
+        run: |
+          cp .env.example .env
+          sed -i "s/^PUID=.*/PUID=$(id -u)/; s/^PGID=.*/PGID=$(id -g)/" .env
+          mkdir -p test-artifacts/captures logs state
+          docker compose -f compose.yaml -f compose.synthetic.yaml up -d --build
+      - name: Wait for healthy services
+        run: |
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8090/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f compose.yaml -f compose.synthetic.yaml ps
+          exit 1
+      - name: Record and validate synthetic media
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"name":"CI synthetic tape"}' \
+            http://127.0.0.1:8090/api/recordings/start >/tmp/vhscribe-start.json
+          sleep 6
+          curl -fsS -X POST http://127.0.0.1:8090/api/recordings/stop \
+            >/tmp/vhscribe-stop.json
+          filename="$(python -c 'import json; print(json.load(open("/tmp/vhscribe-stop.json"))["filename"])')"
+          probe="$(docker compose -f compose.yaml -f compose.synthetic.yaml exec -T app \
+            ffprobe -v error -select_streams v:0 \
+            -show_entries stream=width,height,display_aspect_ratio \
+            -of json "/captures/${filename}")"
+          PROBE_JSON="${probe}" python -c \
+            'import json,os; s=json.loads(os.environ["PROBE_JSON"])["streams"][0]; assert (s["width"],s["height"],s["display_aspect_ratio"]) == (720,576,"4:3"), s'
+      - name: Scan the built image for fixed high-severity vulnerabilities
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock
+          aquasec/trivy:0.72.0 image --scanners vuln --severity HIGH,CRITICAL
+          --ignore-unfixed --exit-code 1 --no-progress vhscribe:local
+      - name: Show diagnostics after failure
+        if: failure()
+        run: docker compose -f compose.yaml -f compose.synthetic.yaml logs --no-color --tail=150
+      - name: Stop synthetic stack
+        if: always()
+        run: docker compose -f compose.yaml -f compose.synthetic.yaml down -t 45
