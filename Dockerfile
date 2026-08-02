@@ -1,4 +1,4 @@
-FROM python:3.12.12-slim-bookworm
+FROM python:3.12.12-slim-trixie
 
 ARG BUILD_VERSION=dev
 ARG VCS_REF=unknown
