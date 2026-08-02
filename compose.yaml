@@ -1,0 +1,105 @@
+name: vhscribe
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.19.3
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    environment:
+      MTX_WEBRTCADDITIONALHOSTS: ${SERVER_ADDRESS:-127.0.0.1}
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - "${SERVER_ADDRESS:-127.0.0.1}:${WEBRTC_HTTP_PORT:-8889}:8889/tcp"
+      - "${SERVER_ADDRESS:-127.0.0.1}:${WEBRTC_UDP_PORT:-8189}:8189/udp"
+    expose:
+      - "8554"
+      - "9997"
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "/mediamtx", "--version"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 3s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  app:
+    image: ${APP_IMAGE:-vhscribe:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-dev}
+        VCS_REF: ${VCS_REF:-unknown}
+        SOURCE_URL: ${SOURCE_URL:-https://github.com/paulcakeface/vhscribe}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    user: "${PUID:-1000}:${PGID:-1000}"
+    group_add:
+      - "${VIDEO_GROUP_ID:-44}"
+      - "${AUDIO_GROUP_ID:-29}"
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+    devices:
+      - "${VIDEO_DEVICE:-/dev/video0}:${VIDEO_DEVICE:-/dev/video0}"
+      - /dev/snd:/dev/snd
+    volumes:
+      - ${CAPTURE_DIRECTORY:-./captures}:/captures
+      - ./logs:/app/logs
+      - ./state:/app/state
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    environment:
+      CAPTURE_DIR: /captures
+      LOG_DIR: /app/logs
+      STATE_DIR: /app/state
+      VIDEO_DEVICE: ${VIDEO_DEVICE:-/dev/video0}
+      AUDIO_DEVICE: ${AUDIO_DEVICE:-hw:CARD=Device,DEV=0}
+      VIDEO_STANDARD: ${VIDEO_STANDARD:-PAL}
+      PREVIEW_RESOLUTION: ${PREVIEW_RESOLUTION:-640x480}
+      PREVIEW_VIDEO_BITRATE: ${PREVIEW_VIDEO_BITRATE:-800k}
+      PREVIEW_AUDIO_BITRATE: ${PREVIEW_AUDIO_BITRATE:-64k}
+      RECORDING_VIDEO_BITRATE: ${RECORDING_VIDEO_BITRATE:-2000k}
+      RECORDING_VIDEO_MAXRATE: ${RECORDING_VIDEO_MAXRATE:-2400k}
+      RECORDING_VIDEO_BUFFER: ${RECORDING_VIDEO_BUFFER:-4000k}
+      RECORDING_AUDIO_BITRATE: ${RECORDING_AUDIO_BITRATE:-128k}
+      AUDIO_RATE: ${AUDIO_RATE:-48000}
+      AUDIO_CHANNELS: ${AUDIO_CHANNELS:-2}
+      PREVIEW_RTSP_URL: rtsp://mediamtx:8554/vhs
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      WEBRTC_HTTP_PORT: ${WEBRTC_HTTP_PORT:-8889}
+      SYNTHETIC_INPUT: "false"
+      AUTO_PREVIEW: "true"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FFMPEG_LOG_LEVEL: ${FFMPEG_LOG_LEVEL:-warning}
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - "${SERVER_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8090}:8090/tcp"
+    stop_grace_period: 45s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/api/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"

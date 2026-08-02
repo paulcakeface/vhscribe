@@ -1,0 +1,57 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Recordings and capture output
+captures/
+recordings/
+*.mkv
+*.mp4
+*.mov
+*.avi
+*.part.*
+test-artifacts/
+
+# Runtime state and logs
+logs/*
+!logs/.gitkeep
+state/*
+!state/.gitkeep
+*.log
+*.log.*
+*.pid
+*.sqlite
+*.sqlite3
+
+# Python caches, environments, and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# IDE and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Unreviewed screenshots and local reports
+screenshots/
+reports/

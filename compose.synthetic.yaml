@@ -1,0 +1,9 @@
+services:
+  app:
+    devices: !reset []
+    environment:
+      SYNTHETIC_INPUT: "true"
+    volumes:
+      - ./test-artifacts/captures:/captures
+      - ./logs:/app/logs
+      - ./state:/app/state

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#12100f">
+  <title>VHScribe — local tape capture</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">LOCAL TAPE ARCHIVE</p>
+      <h1>VHScribe</h1>
+    </div>
+    <div id="statusBadge" class="status status-initialising" aria-live="polite">
+      <span></span><strong>Initialising</strong>
+    </div>
+  </header>
+
+  <main>
+    <section class="preview-panel" aria-label="Live preview">
+      <div class="screen-shell">
+        <iframe id="previewFrame" title="Live VHS preview" allow="autoplay; fullscreen" scrolling="no"></iframe>
+        <div id="previewCover" class="preview-cover">
+          <div class="tape-icon" aria-hidden="true"><i></i><i></i></div>
+          <p>Connecting to the VHS signal…</p>
+        </div>
+      </div>
+      <div class="preview-footer">
+        <span><i class="live-dot"></i> Live monitor</span>
+        <button id="restartPreview" class="text-button" type="button">Restart preview</button>
+      </div>
+    </section>
+
+    <section class="control-card">
+      <label for="recordingName">Recording name</label>
+      <div class="name-row">
+        <input id="recordingName" maxlength="200" autocomplete="off" placeholder="e.g. Family holiday 1994">
+      </div>
+      <p class="hint">Letters, numbers, spaces, underscores and hyphens</p>
+
+      <div class="button-row">
+        <button id="startButton" class="primary-button start" type="button" disabled>
+          <span class="record-dot"></span> Start recording
+        </button>
+        <button id="stopButton" class="primary-button stop" type="button" disabled>
+          <span class="stop-square"></span> Stop recording
+        </button>
+      </div>
+
+      <div id="message" class="message" role="alert" hidden></div>
+
+      <div class="recording-readout">
+        <div>
+          <span>Elapsed</span>
+          <strong id="elapsed">00:00:00</strong>
+        </div>
+        <div>
+          <span>Current size</span>
+          <strong id="currentSize">—</strong>
+        </div>
+        <div class="filename-readout">
+          <span>Output file</span>
+          <strong id="outputFilename">No recording active</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="info-grid" aria-label="System information">
+      <div class="info-card">
+        <span>Available disk space</span>
+        <strong id="diskSpace">Checking…</strong>
+      </div>
+      <div class="info-card">
+        <span>Video capture</span>
+        <strong id="videoDevice">—</strong>
+      </div>
+      <div class="info-card">
+        <span>Audio capture</span>
+        <strong id="audioDevice">—</strong>
+      </div>
+      <div class="info-card">
+        <span>Capture profile</span>
+        <strong id="captureProfile">Checking…</strong>
+      </div>
+    </section>
+
+    <details class="device-panel">
+      <summary>Detected capture hardware</summary>
+      <p>Read-only suggestions from the host. Change devices in <code>.env</code>, then restart.</p>
+      <div id="deviceSuggestions" class="device-suggestions">Scanning available devices…</div>
+    </details>
+
+    <section class="recordings-section">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">CAPTURE LIBRARY</p>
+          <h2>Recent recordings</h2>
+        </div>
+        <button id="refreshRecordings" class="text-button" type="button">Refresh</button>
+      </div>
+      <div id="recordingsList" class="recordings-list">
+        <p class="empty">Loading recordings…</p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="stopDialog">
+    <form method="dialog">
+      <div class="dialog-icon"><span class="stop-square"></span></div>
+      <h2>Stop this recording?</h2>
+      <p>FFmpeg will close the file cleanly, validate it, and restore the live preview.</p>
+      <div class="dialog-actions">
+        <button value="cancel" class="secondary-button">Keep recording</button>
+        <button id="confirmStop" value="confirm" class="primary-button stop">Stop &amp; save</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
