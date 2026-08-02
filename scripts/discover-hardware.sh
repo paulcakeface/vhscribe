@@ -25,7 +25,7 @@ for video_device in /dev/video*; do
   fi
   if command -v udevadm >/dev/null 2>&1; then
     udevadm info --query=property --name="${video_device}" 2>/dev/null \
-      | sed -n -E 's/^(ID_VENDOR|ID_MODEL|ID_SERIAL_SHORT|ID_BUS)=/  \1: /p'
+      | sed -n -E 's/^(ID_VENDOR|ID_MODEL|ID_BUS)=/  \1: /p'
   fi
   if command -v v4l2-ctl >/dev/null 2>&1; then
     v4l2-ctl --device "${video_device}" --all 2>/dev/null \
