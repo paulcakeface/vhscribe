@@ -14,8 +14,8 @@
       <p class="eyebrow">LOCAL TAPE ARCHIVE</p>
       <h1>VHScribe</h1>
     </div>
-    <div id="statusBadge" class="status status-initialising" aria-live="polite">
-      <span></span><strong>Initialising</strong>
+    <div id="statusBadge" class="status status-idle" aria-live="polite">
+      <span></span><strong>Idle</strong>
     </div>
   </header>
 
@@ -25,13 +25,18 @@
         <iframe id="previewFrame" title="Live VHS preview" allow="autoplay; fullscreen" scrolling="no"></iframe>
         <div id="previewCover" class="preview-cover">
           <div class="tape-icon" aria-hidden="true"><i></i><i></i></div>
-          <p>Connecting to the VHS signal…</p>
+          <strong id="previewCoverTitle">Preview is idle</strong>
+          <p id="previewCoverDetail">Start preview when you are ready to check the tape signal.</p>
         </div>
       </div>
       <div class="preview-footer">
-        <span><i class="live-dot"></i> Live monitor</span>
-        <button id="restartPreview" class="text-button" type="button">Restart preview</button>
+        <span id="previewState"><i class="live-dot"></i> Preview stopped</span>
+        <div class="preview-actions">
+          <button id="startPreview" class="small-button" type="button">Start Preview</button>
+          <button id="stopPreview" class="small-button" type="button" disabled>Stop Preview</button>
+        </div>
       </div>
+      <p id="previewTimeout" class="preview-timeout">Preview automatically stops when unused.</p>
     </section>
 
     <section class="control-card">
@@ -111,7 +116,7 @@
     <form method="dialog">
       <div class="dialog-icon"><span class="stop-square"></span></div>
       <h2>Stop this recording?</h2>
-      <p>FFmpeg will close the file cleanly, validate it, and restore the live preview.</p>
+      <p>FFmpeg will close the file cleanly, validate it, and return the capture devices to idle.</p>
       <div class="dialog-actions">
         <button value="cancel" class="secondary-button">Keep recording</button>
         <button id="confirmStop" value="confirm" class="primary-button stop">Stop &amp; save</button>

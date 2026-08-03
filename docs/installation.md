@@ -12,7 +12,8 @@ operational details for a headless host.
    timezone values.
 4. Create the capture directory and ensure the operator can write it.
 5. Start with `docker compose up -d --build` and run `./scripts/verify-installation.sh`.
-6. Perform a short, non-sensitive test recording and inspect it before beginning a long capture.
+6. Confirm the dashboard initially reports **Idle**, start and stop preview, then perform a short,
+   non-sensitive test recording and inspect it before beginning a long capture.
 
 ## Routine commands
 

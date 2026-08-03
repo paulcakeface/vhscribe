@@ -75,6 +75,27 @@ jobs:
           done
           docker compose -f compose.yaml -f compose.synthetic.yaml ps
           exit 1
+      - name: Exercise on-demand preview lifecycle
+        run: |
+          status="$(curl -fsS http://127.0.0.1:8090/api/status)"
+          STATUS_JSON="${status}" python -c \
+            'import json,os; s=json.loads(os.environ["STATUS_JSON"]); assert s["state"] == "idle" and not s["process_alive"], s'
+          curl -fsS -X POST http://127.0.0.1:8090/api/preview/start >/tmp/vhscribe-preview-start.json
+          for _ in $(seq 1 20); do
+            status="$(curl -fsS http://127.0.0.1:8090/api/status)"
+            if STATUS_JSON="${status}" python -c \
+              'import json,os,sys; sys.exit(0 if json.loads(os.environ["STATUS_JSON"])["preview_available"] else 1)'; then
+              break
+            fi
+            sleep 1
+          done
+          STATUS_JSON="${status}" python -c \
+            'import json,os; s=json.loads(os.environ["STATUS_JSON"]); assert s["preview_available"], s'
+          curl -fsS -X POST http://127.0.0.1:8090/api/preview/heartbeat >/tmp/vhscribe-heartbeat.json
+          curl -fsS -X POST http://127.0.0.1:8090/api/preview/stop >/tmp/vhscribe-preview-stop.json
+          status="$(curl -fsS http://127.0.0.1:8090/api/status)"
+          STATUS_JSON="${status}" python -c \
+            'import json,os; s=json.loads(os.environ["STATUS_JSON"]); assert s["state"] == "idle" and not s["process_alive"], s'
       - name: Record and validate synthetic media
         run: |
           curl -fsS -X POST -H 'Content-Type: application/json' \
@@ -90,6 +111,9 @@ jobs:
             -of json "/captures/${filename}")"
           PROBE_JSON="${probe}" python -c \
             'import json,os; s=json.loads(os.environ["PROBE_JSON"])["streams"][0]; assert (s["width"],s["height"],s["display_aspect_ratio"]) == (720,576,"4:3"), s'
+          status="$(curl -fsS http://127.0.0.1:8090/api/status)"
+          STATUS_JSON="${status}" python -c \
+            'import json,os; s=json.loads(os.environ["STATUS_JSON"]); assert s["state"] == "idle" and not s["process_alive"], s'
       - name: Scan the built image for fixed high-severity vulnerabilities
         run: >-
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock

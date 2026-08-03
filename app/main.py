@@ -34,22 +34,23 @@ async def lifespan(_: FastAPI):
         manager.shutdown()
 
 
-app = FastAPI(title="VHScribe", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="VHScribe", version="0.2.0-dev", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 
-def preview_service_ready() -> bool:
+def preview_service_status() -> tuple[bool, bool]:
     try:
         with urllib.request.urlopen(
             f"{settings.mediamtx_api_url}/v3/paths/list", timeout=0.75
         ) as response:
             data = json.load(response)
     except (urllib.error.URLError, TimeoutError, ValueError):
-        return False
-    return any(
+        return False, False
+    ready = any(
         item.get("name") == "vhs" and item.get("ready") is True and "H264" in item.get("tracks", [])
         for item in data.get("items", [])
     )
+    return True, ready
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -61,11 +62,20 @@ def index() -> HTMLResponse:
 @app.get("/api/status")
 def api_status() -> dict:
     status = manager.status()
-    preview_ready = status["process_alive"] and preview_service_ready()
+    preview_reachable, preview_published = preview_service_status()
+    preview_ready = status["process_alive"] and preview_published
     status["preview_available"] = preview_ready
     status["preview_service_available"] = preview_ready
+    status["preview_transport_reachable"] = preview_reachable
     if status["state"] == "preview_available" and not preview_ready:
-        status["state"] = "initialising"
+        if preview_reachable:
+            status["state"] = "starting_preview"
+        else:
+            status["state"] = "error"
+            status["last_error"] = (
+                status.get("last_error")
+                or "Preview transport is unavailable; stop preview and check MediaMTX."
+            )
     status["disk"] = manager.catalog.disk()
     status["interrupted_count"] = sum(
         1 for path in manager.catalog.interrupted() if path.name != status.get("filename")
@@ -75,15 +85,17 @@ def api_status() -> dict:
 
 @app.get("/api/health")
 def api_health() -> JSONResponse:
+    manager_status = manager.status()
+    preview_reachable, _ = preview_service_status()
     checks = {
         "capture_directory": settings.capture_dir.is_dir(),
         "capture_directory_writable": settings.capture_dir.is_dir()
         and os.access(settings.capture_dir, os.W_OK),
         "video_device": settings.synthetic_input or Path(settings.video_device).exists(),
-        "ffmpeg_process": manager.status()["process_alive"] or not settings.auto_preview,
-        "mediamtx_preview": False,
+        "capture_process_state": manager_status["process_alive"]
+        or manager_status["state"] in {"idle", "error"},
+        "mediamtx_service": preview_reachable,
     }
-    checks["mediamtx_preview"] = preview_service_ready()
     healthy = all(checks.values())
     return JSONResponse({"healthy": healthy, "checks": checks}, status_code=200 if healthy else 503)
 
@@ -108,6 +120,31 @@ def stop_recording() -> dict:
         status = 409 if "no recording" in str(exc) else 500
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     return {"stopped": True, "filename": output.name}
+
+
+@app.post("/api/preview/start", status_code=202)
+def start_preview() -> dict:
+    try:
+        started = manager.start_preview()
+    except CaptureConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidState as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"accepted": True, "started": started}
+
+
+@app.post("/api/preview/stop")
+def stop_preview() -> dict:
+    try:
+        stopped = manager.stop_preview()
+    except CaptureConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"stopped": stopped}
+
+
+@app.post("/api/preview/heartbeat")
+def preview_heartbeat() -> dict:
+    return {"active": manager.preview_heartbeat()}
 
 
 @app.get("/api/recordings")
@@ -164,6 +201,7 @@ def api_config(request: Request) -> dict:
         "video_standard": settings.video_standard,
         "master_resolution": settings.video_size,
         "master_display_aspect_ratio": "4:3",
+        "preview_idle_timeout_seconds": settings.preview_idle_timeout_seconds,
     }
 
 

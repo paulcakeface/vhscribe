@@ -32,3 +32,14 @@ def test_invalid_preview_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PREVIEW_RESOLUTION", "full-hd")
     with pytest.raises(ValueError, match="WIDTHxHEIGHT"):
         Settings.from_env()
+
+
+def test_preview_idle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PREVIEW_IDLE_TIMEOUT_SECONDS", "120")
+    assert Settings.from_env().preview_idle_timeout_seconds == 120
+
+
+def test_preview_idle_timeout_must_be_positive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PREVIEW_IDLE_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ValueError, match="greater than zero"):
+        Settings.from_env()

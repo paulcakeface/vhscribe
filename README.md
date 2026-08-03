@@ -3,7 +3,7 @@
 Self-hosted, browser-controlled VHS capture for headless Linux servers, powered by FFmpeg,
 MediaMTX and WebRTC.
 
-![VHScribe dashboard showing a synthetic colour-bar preview, server-side recording controls, elapsed time, output size, and capture status](docs/images/vhscribe-dashboard.png)
+![VHScribe dashboard in dormant idle mode with explicit preview and recording controls](docs/images/vhscribe-dashboard.png)
 
 [![CI](https://github.com/paulcakeface/vhscribe/actions/workflows/ci.yml/badge.svg)](https://github.com/paulcakeface/vhscribe/actions/workflows/ci.yml)
 [![Container build](https://github.com/paulcakeface/vhscribe/actions/workflows/container.yml/badge.svg)](https://github.com/paulcakeface/vhscribe/actions/workflows/container.yml)
@@ -17,6 +17,7 @@ control.
 ## Key features
 
 - Low-latency browser preview through MediaMTX and WebRTC
+- On-demand preview that releases video and audio devices while idle
 - One supervised FFmpeg process, so preview and recording never fight over a capture device
 - PAL (720×576 at 25 fps) and NTSC (720×480 at 30000/1001 fps) capture profiles
 - Explicit 4:3 display-aspect signaling without resizing the encoded master
@@ -37,9 +38,10 @@ flowchart LR
     A --> F
 ```
 
-In plain terms: the FastAPI service owns one FFmpeg process. FFmpeg writes the master file and
-publishes a lightweight preview to MediaMTX; the browser controls the service over HTTP and views
-the preview over WebRTC. See [the detailed architecture](docs/architecture.md).
+In plain terms: FastAPI owns at most one FFmpeg process. No capture process runs while VHScribe is
+idle. On request, FFmpeg publishes a lightweight preview to MediaMTX; while recording, that same
+process also writes the master file. The browser controls the service over HTTP and views the
+preview over WebRTC. See [the detailed architecture](docs/architecture.md).
 
 ## Supported and tested hardware
 
@@ -127,6 +129,7 @@ Compose reads the untracked `.env` file in the project directory.
 | `PREVIEW_RESOLUTION` | `640x480` | Browser-preview encode size |
 | `PREVIEW_VIDEO_BITRATE` | `800k` | Preview H.264 target bitrate |
 | `PREVIEW_AUDIO_BITRATE` | `64k` | Preview Opus bitrate |
+| `PREVIEW_IDLE_TIMEOUT_SECONDS` | `300` | Stop preview-only capture after this many seconds without a visible-browser heartbeat |
 | `RECORDING_VIDEO_BITRATE` | `2000k` | Master H.264 target bitrate |
 | `RECORDING_VIDEO_MAXRATE` | `2400k` | Master H.264 rate ceiling |
 | `RECORDING_VIDEO_BUFFER` | `4000k` | Master encoder VBV buffer |
@@ -143,12 +146,16 @@ captures.
 
 ## Recording workflow
 
-1. Rewind and connect the tape deck, then verify video and audio in the live preview.
+1. Rewind and connect the tape deck, select **Start Preview**, then verify video and audio.
 2. Enter a short recording name and select **Start recording**.
 3. VHScribe switches its single FFmpeg process from preview-only mode to recording-plus-preview.
 4. Select **Stop recording**. FFmpeg closes the MKV, `ffprobe` confirms video and audio streams,
-   and the `.part.mkv` is atomically renamed to `.mkv`.
+   the `.part.mkv` is atomically renamed to `.mkv`, and capture returns to dormant idle mode.
 5. Play or download the completed file from the recent-recordings list.
+
+Preview is optional: recording can start directly from idle. A preview-only process stops after the
+configured heartbeat timeout when no visible dashboard is watching. Closing the dashboard never
+stops an active recording.
 
 Use the dashboard stop button before stopping Compose during an active capture. For a normal
 shutdown:
@@ -214,6 +221,8 @@ delete those files.
   membership after logging in again.
 - **Preview works only on the server:** bind `SERVER_ADDRESS` to one specific private LAN address
   and allow the configured TCP/UDP ports through the host firewall.
+- **Preview has stopped:** this is expected after the configured inactivity timeout. Select
+  **Start Preview** to reopen the capture devices.
 - **Black, unstable, or incorrectly timed video:** confirm `VIDEO_STANDARD` matches the tape/player
   output and that the selected V4L2 endpoint advertises the required mode.
 - **No audio:** test the exact ALSA source with `arecord`; numeric card indexes can move after a

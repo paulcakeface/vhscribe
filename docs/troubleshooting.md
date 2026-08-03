@@ -24,6 +24,7 @@ Use `compose.synthetic.yaml` to separate an application problem from a hardware-
 
 ## Preview is initialising or unavailable
 
+- Select **Start Preview** first. Dormant idle mode intentionally has no FFmpeg publisher.
 - Confirm `docker compose ps` reports both services healthy.
 - Check the application log for an FFmpeg input error and MediaMTX logs for a `vhs` publisher.
 - Confirm PAL/NTSC matches the active tape deck signal.
@@ -31,6 +32,8 @@ Use `compose.synthetic.yaml` to separate an application problem from a hardware-
   firewall. HTTP access alone is not enough for the media path.
 - A browser with strict WebRTC/network policy may fail even when the dashboard loads; test a clean,
   current browser profile.
+- If preview stops after the dashboard is closed or hidden, that is the configured idle timeout,
+  not a capture failure. Active recordings ignore the preview timeout.
 
 ## Device busy
 
@@ -43,6 +46,9 @@ sudo fuser -v /dev/video0 /dev/snd/* 2>/dev/null
 
 Do not kill an unknown process until you understand what it is doing. If VHScribe is recording, use
 the dashboard stop action first.
+
+In dormant idle mode, VHScribe should not appear as an owner of `/dev/video*` or an ALSA capture
+PCM. The FastAPI and MediaMTX containers remain running even though FFmpeg is absent.
 
 ## Video is black, unstable, or the wrong shape
 

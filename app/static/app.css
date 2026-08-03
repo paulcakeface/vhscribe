@@ -55,6 +55,8 @@ h2 { margin-bottom: 0; font-size: 1.45rem; letter-spacing: -.025em; }
   font-size: .84rem;
 }
 .status span { width: 9px; height: 9px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 12px currentColor; }
+.status-idle span { background: #77716b; }
+.status-starting_preview span, .status-starting_recording span, .status-stopping span { background: var(--amber); }
 .status-preview_available span { background: var(--green); }
 .status-recording span { background: var(--red); animation: pulse 1.35s infinite; }
 .status-error span { background: var(--red); }
@@ -67,11 +69,14 @@ main { max-width: 1180px; margin: 0 auto; padding: 0 24px 60px; }
 .screen-shell iframe { width: 100%; height: 100%; border: 0; display: block; }
 .preview-cover { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; background: #080808; color: var(--muted); text-align: center; }
 .preview-cover.hidden { display: none; }
-.preview-cover p { margin: 0; }
+.preview-cover strong { color: var(--ink); }
+.preview-cover p { max-width: 34rem; margin: 0; padding: 0 20px; }
 .tape-icon { width: 74px; height: 46px; display: flex; align-items: center; justify-content: space-around; padding: 9px; border: 2px solid #55504b; border-radius: 8px; }
 .tape-icon i { width: 20px; height: 20px; border: 5px dotted #77716b; border-radius: 50%; }
 .preview-footer { padding: 13px 18px; display: flex; justify-content: space-between; align-items: center; font-size: .83rem; color: var(--muted); }
 .live-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--red); }
+.preview-actions { display: flex; gap: 8px; }
+.preview-timeout { margin: -5px 18px 13px; color: var(--muted); font-size: .74rem; }
 .text-button { padding: 5px; border: 0; background: none; color: var(--blue); }
 .text-button:hover { text-decoration: underline; }
 
@@ -146,6 +151,8 @@ dialog p { color: var(--muted); line-height: 1.5; }
   .status { padding: 8px 10px; font-size: .72rem; }
   main { padding: 0 12px 36px; }
   .preview-panel { border-radius: 13px; }
+  .preview-footer { align-items: flex-start; gap: 10px; }
+  .preview-actions { flex-direction: column; }
   .control-card, .recordings-section { padding: 17px; }
   .button-row, .dialog-actions { grid-template-columns: 1fr; }
   .recording-readout { grid-template-columns: 1fr 1fr; }

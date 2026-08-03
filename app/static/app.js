@@ -2,6 +2,12 @@ const elements = {
   badge: document.querySelector('#statusBadge'),
   preview: document.querySelector('#previewFrame'),
   previewCover: document.querySelector('#previewCover'),
+  previewCoverTitle: document.querySelector('#previewCoverTitle'),
+  previewCoverDetail: document.querySelector('#previewCoverDetail'),
+  previewState: document.querySelector('#previewState'),
+  previewTimeout: document.querySelector('#previewTimeout'),
+  startPreview: document.querySelector('#startPreview'),
+  stopPreview: document.querySelector('#stopPreview'),
   start: document.querySelector('#startButton'),
   stop: document.querySelector('#stopButton'),
   name: document.querySelector('#recordingName'),
@@ -19,11 +25,12 @@ const elements = {
 };
 
 let currentStatus = null;
-let previewWasAvailable = false;
+let previewLoaded = false;
 let previewUrl = `${location.protocol}//${location.hostname}:8889/vhs`;
 
 const statusLabels = {
-  initialising: 'Initialising',
+  idle: 'Idle',
+  starting_preview: 'Starting preview',
   preview_available: 'Preview available',
   starting_recording: 'Starting recording',
   recording: 'Recording',
@@ -67,14 +74,29 @@ async function request(url, options = {}) {
 }
 
 function loadPreview() {
+  if (previewLoaded) return;
   elements.preview.src = previewUrl;
+  previewLoaded = true;
+}
+
+function unloadPreview() {
+  if (!previewLoaded) return;
+  elements.preview.removeAttribute('src');
+  previewLoaded = false;
 }
 
 async function loadConfiguration() {
   const config = await request('/api/config');
+  const previewUrlChanged = previewUrl !== config.preview_url;
   previewUrl = config.preview_url;
+  if (previewUrlChanged && previewLoaded) {
+    unloadPreview();
+    if (currentStatus?.preview_available) loadPreview();
+  }
   elements.profile.textContent = `${config.video_standard} · ${config.master_resolution} · ${config.master_display_aspect_ratio}`;
-  loadPreview();
+  const minutes = config.preview_idle_timeout_seconds / 60;
+  const timeout = Number.isInteger(minutes) ? minutes : minutes.toFixed(1);
+  elements.previewTimeout.textContent = `Preview automatically stops after ${timeout} minutes without a visible-dashboard heartbeat. Recordings are never stopped by this timer.`;
 }
 
 async function loadDevices() {
@@ -102,10 +124,13 @@ function renderStatus(status) {
   currentStatus = status;
   elements.badge.className = `status status-${status.state}`;
   elements.badge.querySelector('strong').textContent = statusLabels[status.state] || status.state;
-  const busy = ['starting_recording', 'stopping', 'initialising'].includes(status.state);
-  elements.start.disabled = status.recording || busy || status.state === 'error';
+  const busy = ['starting_recording', 'stopping'].includes(status.state);
+  const previewProcess = status.process_alive && ['preview', 'recording'].includes(status.mode);
+  elements.start.disabled = status.recording || busy;
   elements.stop.disabled = !status.recording || status.state === 'stopping';
   elements.name.disabled = status.recording || busy;
+  elements.startPreview.disabled = previewProcess || status.recording || busy;
+  elements.stopPreview.disabled = !previewProcess || status.recording || status.state === 'stopping';
   elements.elapsed.textContent = duration(status.elapsed_seconds);
   elements.currentSize.textContent = status.filename ? bytes(status.file_size_bytes) : '—';
   elements.filename.textContent = status.filename || 'No recording active';
@@ -114,9 +139,35 @@ function renderStatus(status) {
   elements.audio.textContent = status.audio_device;
   showMessage(status.last_error);
 
-  if (status.preview_available && !previewWasAvailable) loadPreview();
-  previewWasAvailable = status.preview_available;
+  if (status.preview_available) loadPreview();
+  if (!status.process_alive) unloadPreview();
   elements.previewCover.classList.toggle('hidden', status.preview_available);
+
+  if (status.state === 'starting_preview') {
+    elements.previewCoverTitle.textContent = 'Starting preview…';
+    elements.previewCoverDetail.textContent = 'Opening the capture devices and waiting for the WebRTC stream.';
+    elements.previewState.innerHTML = '<i class="live-dot"></i> Starting preview';
+  } else if (status.recording && !status.preview_available) {
+    elements.previewCoverTitle.textContent = status.preview_transport_reachable
+      ? 'Recording is starting…'
+      : 'Preview transport unavailable';
+    elements.previewCoverDetail.textContent = status.preview_transport_reachable
+      ? 'The master capture is independent of this browser preview.'
+      : 'The server-side master recording continues independently of MediaMTX and this browser.';
+    elements.previewState.innerHTML = '<i class="live-dot"></i> Recording';
+  } else if (status.preview_available) {
+    elements.previewState.innerHTML = `<i class="live-dot"></i> ${status.recording ? 'Recording monitor' : 'Live monitor'}`;
+  } else if (status.state === 'error') {
+    elements.previewCoverTitle.textContent = 'Preview error';
+    elements.previewCoverDetail.textContent = 'Check the message below, then retry when the capture device is available.';
+    elements.previewState.innerHTML = '<i class="live-dot"></i> Preview unavailable';
+  } else {
+    elements.previewCoverTitle.textContent = status.state === 'stopping' ? 'Stopping…' : 'Preview is idle';
+    elements.previewCoverDetail.textContent = status.state === 'stopping'
+      ? 'Releasing the capture devices.'
+      : 'Start preview when you are ready to check the tape signal.';
+    elements.previewState.innerHTML = '<i class="live-dot"></i> Preview stopped';
+  }
 }
 
 async function pollStatus() {
@@ -155,6 +206,38 @@ async function stopRecording() {
     showMessage(error.message);
     await pollStatus();
   }
+}
+
+async function startPreview() {
+  showMessage('');
+  elements.startPreview.disabled = true;
+  try {
+    await request('/api/preview/start', { method: 'POST' });
+    await pollStatus();
+  } catch (error) {
+    showMessage(error.message);
+    await pollStatus();
+  }
+}
+
+async function stopPreview() {
+  showMessage('');
+  elements.stopPreview.disabled = true;
+  try {
+    await request('/api/preview/stop', { method: 'POST' });
+    unloadPreview();
+    await pollStatus();
+  } catch (error) {
+    showMessage(error.message);
+    await pollStatus();
+  }
+}
+
+async function previewHeartbeat() {
+  if (!currentStatus?.preview_available || document.hidden) return;
+  try {
+    await request('/api/preview/heartbeat', { method: 'POST' });
+  } catch (_) { /* Status polling reports connectivity failures. */ }
 }
 
 function recordingRow(item) {
@@ -239,17 +322,15 @@ async function recoverRecording(filename, button) {
 
 elements.start.addEventListener('click', startRecording);
 elements.stop.addEventListener('click', () => elements.stopDialog.showModal());
+elements.startPreview.addEventListener('click', startPreview);
+elements.stopPreview.addEventListener('click', stopPreview);
 elements.stopDialog.addEventListener('close', () => {
   if (elements.stopDialog.returnValue === 'confirm') stopRecording();
 });
-document.querySelector('#restartPreview').addEventListener('click', async () => {
-  try {
-    await request('/api/preview/restart', { method: 'POST' });
-    previewWasAvailable = false;
-    await pollStatus();
-  } catch (error) { showMessage(error.message); }
-});
 document.querySelector('#refreshRecordings').addEventListener('click', loadRecordings);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) previewHeartbeat();
+});
 
 loadConfiguration().catch(error => showMessage(`Configuration unavailable: ${error.message}`));
 loadDevices();
@@ -257,3 +338,4 @@ pollStatus();
 loadRecordings();
 setInterval(pollStatus, 1000);
 setInterval(loadRecordings, 15000);
+setInterval(previewHeartbeat, 15000);

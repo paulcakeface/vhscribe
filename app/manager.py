@@ -47,10 +47,10 @@ class CaptureManager:
         self._process_started = 0.0
         self._expected_stop = False
         self._shutdown = False
-        self._restart_at: float | None = None
+        self._last_preview_heartbeat: float | None = None
         self._monitor_thread: threading.Thread | None = None
         self._reader_threads: list[threading.Thread] = []
-        self._state = "initialising"
+        self._state = "idle"
         self._active_path: Path | None = None
         self._active_started_wall: float | None = None
         self._progress: dict[str, object] = {}
@@ -77,11 +77,8 @@ class CaptureManager:
                 target=self._monitor, name="capture-monitor", daemon=True
             )
             self._monitor_thread.start()
-        if self.settings.auto_preview:
-            self.start_preview()
-        else:
-            with self._lock:
-                self._state = "preview_available"
+        with self._lock:
+            self._state = "idle"
 
     def _safe_error(self, message: str) -> str:
         message = " ".join(message.strip().split())
@@ -153,33 +150,75 @@ class CaptureManager:
                 process.kill()
                 return process.wait(timeout=5)
 
-    def start_preview(self) -> None:
+    def start_preview(self) -> bool:
         with self._lock:
-            if self._shutdown or self._process is not None:
-                return
-            self._state = "initialising"
+            if self._shutdown:
+                raise InvalidState("capture service is shutting down")
+            if self._state in {"starting_recording", "stopping"}:
+                raise CaptureConflict("preview cannot start during a capture transition")
+            if self._active_path is not None or self._process_mode == "recording":
+                self._last_preview_heartbeat = time.monotonic()
+                return False
+            if self._process is not None and self._process.poll() is None:
+                self._last_preview_heartbeat = time.monotonic()
+                return False
+            if self._process is not None:
+                self._process = None
+                self._process_mode = None
+            self._state = "starting_preview"
+            self._last_error = None
+            self._last_preview_heartbeat = time.monotonic()
             try:
                 self._launch(build_preview_command(self.settings), "preview")
-                self._restart_at = None
+                return True
             except OSError as exc:
                 self._state = "error"
                 self._last_error = self._safe_error(str(exc))
-                self._restart_at = time.monotonic() + self.settings.preview_restart_seconds
+                self._last_preview_heartbeat = None
+                raise InvalidState("FFmpeg preview could not start") from exc
 
-    def restart_preview(self) -> None:
+    def preview_heartbeat(self) -> bool:
         with self._lock:
-            if self._state in {"recording", "starting_recording", "stopping"}:
-                raise CaptureConflict("preview cannot restart during a recording transition")
-            process = self._process
-            self._expected_stop = process is not None
-            self._state = "initialising"
-        if process is not None:
-            self._stop_process(process)
+            process_alive = self._process is not None and self._process.poll() is None
+            if process_alive and self._process_mode in {"preview", "recording"}:
+                self._last_preview_heartbeat = time.monotonic()
+                return True
+            return False
+
+    def stop_preview(self, *, idle_heartbeat: float | None = None) -> bool:
+        with self._lock:
+            if self._active_path is not None or self._process_mode == "recording":
+                raise CaptureConflict("preview cannot be stopped while recording")
+            if self._state == "starting_recording":
+                raise CaptureConflict("preview cannot stop during a recording transition")
+            if idle_heartbeat is not None and self._last_preview_heartbeat != idle_heartbeat:
+                return False
+            process = self._process if self._process_mode == "preview" else None
+            if process is None or process.poll() is not None:
+                if self._process is process:
+                    self._process = None
+                    self._process_mode = None
+                self._state = "idle"
+                self._last_preview_heartbeat = None
+                return False
+            self._expected_stop = True
+            self._state = "stopping"
+        self._stop_process(process)
         with self._lock:
             if self._process is process:
                 self._process = None
                 self._process_mode = None
             self._expected_stop = False
+            self._progress = {}
+            self._last_preview_heartbeat = None
+            self._state = "idle"
+        return True
+
+    def restart_preview(self) -> None:
+        with self._lock:
+            if self._state in {"recording", "starting_recording", "stopping"}:
+                raise CaptureConflict("preview cannot restart during a recording transition")
+        self.stop_preview()
         self.start_preview()
 
     def start_recording(self, name: str) -> Path:
@@ -190,6 +229,7 @@ class CaptureManager:
             self._expected_stop = process is not None
             self._state = "starting_recording"
             self._last_error = None
+            self._last_preview_heartbeat = None
         if process is not None:
             self._stop_process(process)
         with self._lock:
@@ -203,7 +243,6 @@ class CaptureManager:
                 self._state = "error"
                 self._last_error = self._safe_error(str(exc))
                 self._expected_stop = False
-                self._restart_at = time.monotonic() + self.settings.preview_restart_seconds
                 raise InvalidState("FFmpeg could not start") from exc
             self._active_path = output
             self._active_started_wall = time.time()
@@ -224,7 +263,7 @@ class CaptureManager:
         os.rename(partial, final)
         return final
 
-    def stop_recording(self, *, restart_preview: bool = True) -> Path:
+    def stop_recording(self) -> Path:
         with self._lock:
             if self._state not in {"recording", "starting_recording"} or not self._active_path:
                 raise InvalidState("no recording is active")
@@ -253,59 +292,55 @@ class CaptureManager:
                 self._last_error = self._safe_error(str(error))
             else:
                 self._last_completed = final.name if final else None
-                self._state = (
-                    "initialising"
-                    if restart_preview and not self._shutdown
-                    else "preview_available"
-                )
-        if restart_preview and not self._shutdown:
-            self.start_preview()
+                self._state = "idle"
+                self._last_preview_heartbeat = None
         if error:
             raise InvalidState(str(error)) from error
         assert final is not None
         return final
 
+    def _monitor_once(self) -> None:
+        expired_heartbeat: float | None = None
+        with self._lock:
+            process = self._process
+            if process is None:
+                return
+            returncode = process.poll()
+            if returncode is None:
+                now = time.monotonic()
+                if now - self._process_started >= 1:
+                    if self._process_mode == "preview" and self._state == "starting_preview":
+                        self._state = "preview_available"
+                    elif self._process_mode == "recording" and self._state == "starting_recording":
+                        self._state = "recording"
+                if (
+                    self._process_mode == "preview"
+                    and self._last_preview_heartbeat is not None
+                    and now - self._last_preview_heartbeat
+                    >= self.settings.preview_idle_timeout_seconds
+                ):
+                    expired_heartbeat = self._last_preview_heartbeat
+            elif not self._expected_stop:
+                failed_mode = self._process_mode
+                self._process = None
+                self._process_mode = None
+                self._last_preview_heartbeat = None
+                if failed_mode == "recording":
+                    self._active_path = None
+                    self._active_started_wall = None
+                self._state = "error"
+                self._last_error = (
+                    self._last_error or f"FFmpeg {failed_mode} process exited ({returncode})"
+                )
+        if expired_heartbeat is not None:
+            # A recording transition may win the lock after the timeout check.
+            with suppress(CaptureConflict):
+                self.stop_preview(idle_heartbeat=expired_heartbeat)
+
     def _monitor(self) -> None:
         while not self._shutdown:
             time.sleep(0.5)
-            should_restart = False
-            with self._lock:
-                process = self._process
-                if process is not None:
-                    returncode = process.poll()
-                    if returncode is None:
-                        if time.monotonic() - self._process_started >= 1:
-                            if self._process_mode == "preview" and self._state == "initialising":
-                                self._state = "preview_available"
-                            elif (
-                                self._process_mode == "recording"
-                                and self._state == "starting_recording"
-                            ):
-                                self._state = "recording"
-                        continue
-                    if self._expected_stop:
-                        continue
-                    failed_mode = self._process_mode
-                    self._process = None
-                    self._process_mode = None
-                    if failed_mode == "recording":
-                        self._active_path = None
-                        self._active_started_wall = None
-                    self._state = "error"
-                    self._last_error = (
-                        self._last_error or f"FFmpeg {failed_mode} process exited ({returncode})"
-                    )
-                    self._restart_at = time.monotonic() + self.settings.preview_restart_seconds
-                if (
-                    self._process is None
-                    and self.settings.auto_preview
-                    and self._restart_at is not None
-                    and time.monotonic() >= self._restart_at
-                ):
-                    should_restart = True
-                    self._restart_at = None
-            if should_restart:
-                self.start_preview()
+            self._monitor_once()
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -324,6 +359,13 @@ class CaptureManager:
                 progress_size = self._progress.get("total_size")
                 if isinstance(progress_size, (int, float)):
                     size = max(size, int(progress_size))
+            preview_idle_remaining: float | None = None
+            if self._process_mode == "preview" and self._last_preview_heartbeat is not None:
+                preview_idle_remaining = max(
+                    0.0,
+                    self.settings.preview_idle_timeout_seconds
+                    - (time.monotonic() - self._last_preview_heartbeat),
+                )
             return {
                 "state": self._state,
                 "mode": self._process_mode,
@@ -343,6 +385,8 @@ class CaptureManager:
                 else self.settings.audio_device,
                 "last_error": self._last_error,
                 "last_completed": self._last_completed,
+                "preview_idle_timeout_seconds": self.settings.preview_idle_timeout_seconds,
+                "preview_idle_remaining_seconds": preview_idle_remaining,
                 "progress": dict(self._progress),
             }
 
@@ -358,7 +402,7 @@ class CaptureManager:
             self._expected_stop = process is not None
         if recording:
             try:
-                self.stop_recording(restart_preview=False)
+                self.stop_recording()
             except InvalidState:
                 self._logger.exception("recording could not be finalized during shutdown")
         elif process is not None:
@@ -367,5 +411,7 @@ class CaptureManager:
                 if self._process is process:
                     self._process = None
                     self._process_mode = None
+                self._state = "idle"
+                self._last_preview_heartbeat = None
         if self._monitor_thread:
             self._monitor_thread.join(timeout=2)

@@ -62,8 +62,7 @@ class Settings:
     ffmpeg_log_level: str = "warning"
     log_level: str = "INFO"
     synthetic_input: bool = False
-    auto_preview: bool = True
-    preview_restart_seconds: float = 3.0
+    preview_idle_timeout_seconds: int = 300
     graceful_stop_seconds: float = 30.0
 
     @classmethod
@@ -100,7 +99,6 @@ class Settings:
             ffmpeg_log_level=os.getenv("FFMPEG_LOG_LEVEL", "warning"),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             synthetic_input=_bool("SYNTHETIC_INPUT"),
-            auto_preview=_bool("AUTO_PREVIEW", True),
-            preview_restart_seconds=float(os.getenv("PREVIEW_RESTART_SECONDS", "3")),
+            preview_idle_timeout_seconds=_integer("PREVIEW_IDLE_TIMEOUT_SECONDS", 300),
             graceful_stop_seconds=float(os.getenv("GRACEFUL_STOP_SECONDS", "30")),
         )

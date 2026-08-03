@@ -29,10 +29,13 @@ docker compose --env-file .env.synthetic \
 ./scripts/verify-installation.sh
 ```
 
-Start a short test from the dashboard or API, stop it, and inspect the generated file under the
-ignored `test-artifacts/captures/` directory:
+Exercise preview on demand, then start a short recording from dormant mode and inspect the generated
+file under the ignored `test-artifacts/captures/` directory:
 
 ```bash
+curl -fsS -X POST http://127.0.0.1:8090/api/preview/start
+curl -fsS -X POST http://127.0.0.1:8090/api/preview/heartbeat
+curl -fsS -X POST http://127.0.0.1:8090/api/preview/stop
 curl -fsS -X POST -H 'Content-Type: application/json' \
   -d '{"name":"Synthetic test"}' http://127.0.0.1:8090/api/recordings/start
 sleep 8
@@ -56,14 +59,14 @@ a real capture directory.
 
 - `ruff format --check .` — formatting
 - `ruff check .` — Python lint and common bug patterns
-- `pytest -q` — state, filename, profile, command, and metadata behavior
+- `pytest -q` — preview lifecycle, concurrency, state, filename, profile, command, and metadata behavior
 - `docker compose config --quiet` — resolved configuration
 - `docker build .` — production image
 - `pip-audit -r requirements.txt` — published Python dependency advisories
 - `gitleaks git . --redact` — secret patterns in Git history
 - ShellCheck — shell scripts
 - Lychee — documentation links
-- Synthetic API recording plus `ffprobe` — complete media path
+- Synthetic preview lifecycle plus API recording and `ffprobe` — complete media path
 
 CI runs without private hardware. Physical tests are maintainer-controlled because workflows must
 never depend on USB devices or private recordings.

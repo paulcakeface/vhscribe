@@ -23,28 +23,35 @@ flowchart TB
     Browser -->|HTTP/JSON| App
 ```
 
-Without Mermaid: the browser calls FastAPI; FastAPI owns FFmpeg; FFmpeg reads the USB adapter,
-writes the MKV, and sends a separate low-bitrate preview to MediaMTX; MediaMTX sends WebRTC to the
-browser.
+Without Mermaid: the browser calls FastAPI; FastAPI owns at most one FFmpeg process. FFmpeg is
+absent while idle. Preview-only mode reads the USB adapter and sends a low-bitrate stream to
+MediaMTX. Recording mode reads the adapter once, writes the MKV, and sends a preview branch to
+MediaMTX; MediaMTX sends WebRTC to the browser.
 
 ## Process state
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Initialising
-    Initialising --> PreviewAvailable: preview publisher ready
+    [*] --> Idle
+    Idle --> StartingPreview: start preview
+    StartingPreview --> PreviewAvailable: preview publisher ready
+    PreviewAvailable --> Stopping: manual stop or heartbeat timeout
+    Stopping --> Idle: devices released
+    Idle --> StartingRecording: start recording
     PreviewAvailable --> StartingRecording: start accepted
     StartingRecording --> Recording: FFmpeg stable
     Recording --> Stopping: stop accepted
-    Stopping --> Initialising: validated and renamed
-    Initialising --> Error: process/device failure
+    Stopping --> Idle: validated and renamed
+    StartingPreview --> Error: process/device failure
     Recording --> Error: unexpected exit; partial retained
-    Error --> Initialising: supervised preview restart
+    Error --> StartingPreview: explicit retry
+    Error --> StartingRecording: explicit recording start
 ```
 
 State changes are serialized by one manager lock. Starting a recording first stops the preview
 process and then starts one combined recording/preview process. This prevents two readers opening
-the same V4L2 or ALSA endpoint.
+the same V4L2 or ALSA endpoint. A visible browser sends preview heartbeats; when none arrive for the
+configured timeout, preview-only FFmpeg stops gracefully. Heartbeats never govern recording mode.
 
 ## File lifecycle
 

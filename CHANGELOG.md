@@ -6,9 +6,15 @@ Notable user-facing changes are documented here. This project follows
 
 ## [Unreleased]
 
-### Planned
+### Added
 
-- Collect community hardware compatibility results.
+- Explicit preview start, stop, and heartbeat API/dashboard controls.
+- Configurable `PREVIEW_IDLE_TIMEOUT_SECONDS` inactivity timeout.
+
+### Changed
+
+- VHScribe now starts dormant without FFmpeg and releases capture devices when preview is unused.
+- Recording can start from dormant or preview mode and returns to dormant mode after validation.
 
 ## [0.1.0] - 2026-08-02
 
