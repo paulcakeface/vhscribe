@@ -2,19 +2,48 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from datetime import UTC, datetime
+from fractions import Fraction
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
 from .config import Settings
 from .ffmpeg import ProgressParser, build_preview_command, build_record_command
-from .recordings import RecordingCatalog, final_path_for, probe_media, unique_partial_path
+from .recordings import (
+    RecordingCatalog,
+    atomic_write_json,
+    final_path_for,
+    probe_media,
+    qc_manifest_path,
+    require_video_and_audio,
+    sha256_file,
+    unique_partial_path,
+)
+
+_CAPTURE_WARNING_PATTERNS = {
+    "corrupt_input": re.compile(r"corrupt(?:ed)? data|discarding corrupt", re.I),
+    "audio_xrun": re.compile(r"ALSA buffer xrun|\bxrun\b", re.I),
+    "queue_pressure": re.compile(r"Thread message queue blocking|FIFO queue full", re.I),
+    "frame_duplication_warning": re.compile(r"frames duplicated", re.I),
+    "input_io_error": re.compile(r"Error during demuxing|Input/output error|No such device", re.I),
+}
+
+
+def _same_fraction(actual: str | None, expected: str) -> bool:
+    if not actual or actual in {"0/0", "N/A"}:
+        return False
+    try:
+        return Fraction(actual.replace(":", "/")) == Fraction(expected.replace(":", "/"))
+    except (ValueError, ZeroDivisionError):
+        return False
 
 
 class CaptureConflict(RuntimeError):
@@ -56,6 +85,8 @@ class CaptureManager:
         self._progress: dict[str, object] = {}
         self._last_error: str | None = None
         self._last_completed: str | None = None
+        self._last_qc_status: str | None = None
+        self._capture_warning_counts: dict[str, int] = {}
         self._logger = logging.getLogger(f"vhscribe.ffmpeg.{id(self)}")
         self._logger.setLevel(getattr(logging, settings.log_level, logging.INFO))
         self._logger.propagate = False
@@ -86,6 +117,14 @@ class CaptureManager:
         message = message.replace(self.settings.preview_rtsp_url, "preview service")
         return message[-500:] or "FFmpeg exited unexpectedly"
 
+    def _record_capture_warning(self, line: str) -> None:
+        with self._lock:
+            for name, pattern in _CAPTURE_WARNING_PATTERNS.items():
+                if pattern.search(line):
+                    self._capture_warning_counts[name] = (
+                        self._capture_warning_counts.get(name, 0) + 1
+                    )
+
     def _log_stderr(self, process: subprocess.Popen[str], mode: str) -> None:
         if process.stderr is None:
             return
@@ -94,6 +133,8 @@ class CaptureManager:
             cleaned = line.rstrip()
             if cleaned:
                 self._logger.warning("[%s] %s", mode, cleaned)
+                if mode == "recording":
+                    self._record_capture_warning(cleaned)
                 recent.append(cleaned)
                 recent = recent[-8:]
         if recent and process.poll() not in (None, 0) and not self._expected_stop:
@@ -223,12 +264,16 @@ class CaptureManager:
 
     def start_recording(self, name: str) -> Path:
         with self._lock:
+            if self._shutdown:
+                raise InvalidState("capture service is shutting down")
             if self._state in {"recording", "starting_recording", "stopping"} or self._active_path:
                 raise CaptureConflict("a recording is already active or changing state")
             process = self._process
             self._expected_stop = process is not None
             self._state = "starting_recording"
             self._last_error = None
+            self._last_qc_status = None
+            self._capture_warning_counts = {}
             self._last_preview_heartbeat = None
         if process is not None:
             self._stop_process(process)
@@ -250,18 +295,188 @@ class CaptureManager:
             self._expected_stop = False
             return output
 
+    def _validate_probe(self, data: dict[str, Any]) -> dict[str, str]:
+        require_video_and_audio(data)
+        video = next(stream for stream in data["streams"] if stream.get("codec_type") == "video")
+        audio = next(stream for stream in data["streams"] if stream.get("codec_type") == "audio")
+        expected_width, expected_height = (
+            int(value) for value in self.settings.video_size.split("x", 1)
+        )
+        if (video.get("width"), video.get("height")) != (expected_width, expected_height):
+            raise ValueError(
+                f"recording geometry is {video.get('width')}x{video.get('height')}, "
+                f"expected {self.settings.video_size}"
+            )
+        reported_rates = [
+            str(video.get("avg_frame_rate") or ""),
+            str(video.get("r_frame_rate") or ""),
+        ]
+        actual_rate = next(
+            (rate for rate in reported_rates if _same_fraction(rate, self.settings.video_fps)),
+            None,
+        )
+        if actual_rate is None:
+            reported = ", ".join(rate for rate in reported_rates if rate) or "unknown"
+            raise ValueError(
+                f"recording frame rate is {reported}, expected {self.settings.video_fps}"
+            )
+        if not _same_fraction(video.get("sample_aspect_ratio"), self.settings.master_sar):
+            raise ValueError(
+                f"recording sample aspect is {video.get('sample_aspect_ratio') or 'unknown'}, "
+                f"expected {self.settings.master_sar}"
+            )
+        if not _same_fraction(video.get("display_aspect_ratio"), "4:3"):
+            raise ValueError(
+                "recording display aspect is "
+                f"{video.get('display_aspect_ratio') or 'unknown'}, expected 4:3"
+            )
+        if str(audio.get("sample_rate") or "") != str(self.settings.audio_rate):
+            raise ValueError(
+                f"recording audio rate is {audio.get('sample_rate') or 'unknown'}, "
+                f"expected {self.settings.audio_rate}"
+            )
+        if int(audio.get("channels") or 0) != self.settings.audio_channels:
+            raise ValueError(
+                f"recording audio channels are {audio.get('channels') or 'unknown'}, "
+                f"expected {self.settings.audio_channels}"
+            )
+        duration = float(data.get("format", {}).get("duration", 0) or 0)
+        if duration <= 0:
+            raise ValueError("recording duration is missing or zero")
+        return {
+            "geometry": self.settings.video_size,
+            "frame_rate": (
+                f"{Fraction(self.settings.video_fps).numerator}/"
+                f"{Fraction(self.settings.video_fps).denominator}"
+            ),
+            "sample_aspect_ratio": self.settings.master_sar,
+            "display_aspect_ratio": "4:3",
+            "audio": f"{self.settings.audio_rate}Hz/{self.settings.audio_channels}ch",
+            "duration_seconds": f"{duration:.3f}",
+        }
+
+    def _full_decode_check(self, path: Path) -> None:
+        result = subprocess.run(
+            [
+                self.settings.ffmpeg_bin,
+                "-hide_banner",
+                "-nostdin",
+                "-v",
+                "error",
+                "-xerror",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=4 * 3600,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise ValueError("recording failed the full decode integrity check")
+
+    def _ffmpeg_version(self) -> str:
+        try:
+            result = subprocess.run(
+                [self.settings.ffmpeg_bin, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return "unknown"
+        first = result.stdout.splitlines()[:1]
+        return first[0].strip() if result.returncode == 0 and first else "unknown"
+
     def _validate_and_finalize(self, partial: Path) -> Path:
         if not partial.exists() or partial.stat().st_size <= 0:
             raise ValueError("recording did not produce a non-empty file")
         data = probe_media(self.settings.ffprobe_bin, partial)
-        stream_types = {stream.get("codec_type") for stream in data.get("streams", [])}
-        if not {"video", "audio"}.issubset(stream_types):
-            raise ValueError("recording does not contain both video and audio")
+        self._validate_probe(data)
+        if self.settings.qc_full_decode:
+            self._full_decode_check(partial)
         final = final_path_for(partial)
         if final.exists():
             raise FileExistsError("final recording filename already exists")
         os.rename(partial, final)
         return final
+
+    def _write_qc_manifest(
+        self,
+        final: Path,
+        *,
+        exit_code: int | None,
+        progress: dict[str, object],
+        warning_counts: dict[str, int],
+        started_wall: float | None,
+    ) -> str:
+        data = probe_media(self.settings.ffprobe_bin, final)
+        validation = self._validate_probe(data)
+        warnings = {key: value for key, value in warning_counts.items() if value}
+        drop_frames = float(progress.get("drop_frames", 0) or 0)
+        dup_frames = float(progress.get("dup_frames", 0) or 0)
+        if drop_frames > 0 or dup_frames > 0:
+            warnings["progress_frame_anomaly"] = int(drop_frames + dup_frames)
+        if exit_code not in {None, 0, 255}:
+            warnings["ffmpeg_exit_code"] = int(exit_code)
+        checksum: str | None = None
+        if self.settings.qc_checksum:
+            try:
+                checksum = sha256_file(final)
+            except OSError:
+                warnings["checksum_error"] = 1
+        qc_status = "needs_review" if warnings else "verified"
+        started = (
+            datetime.fromtimestamp(started_wall, UTC).isoformat()
+            if started_wall is not None
+            else None
+        )
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "recording": final.name,
+            "qc_status": qc_status,
+            "capture_started_utc": started,
+            "completed_utc": datetime.now(UTC).isoformat(),
+            "application": {
+                "version": self.settings.app_version,
+                "vcs_ref": self.settings.vcs_ref,
+                "ffmpeg": self._ffmpeg_version(),
+            },
+            "capture": {
+                "video_standard": self.settings.video_standard,
+                "video_size": self.settings.video_size,
+                "video_fps": self.settings.video_fps,
+                "master_sar": self.settings.master_sar,
+                "audio_rate": self.settings.audio_rate,
+                "audio_channels": self.settings.audio_channels,
+                "video_device": "synthetic test source"
+                if self.settings.synthetic_input
+                else self.settings.video_device,
+                "audio_device": "synthetic sine source"
+                if self.settings.synthetic_input
+                else self.settings.audio_device,
+            },
+            "validation": validation,
+            "full_decode": {
+                "performed": self.settings.qc_full_decode,
+                "passed": True if self.settings.qc_full_decode else None,
+            },
+            "ffmpeg_exit_code": exit_code,
+            "progress": progress,
+            "warning_counts": warnings,
+            "sha256": checksum,
+            "probe": data,
+        }
+        atomic_write_json(qc_manifest_path(final), payload)
+        return qc_status
 
     def stop_recording(self) -> Path:
         with self._lock:
@@ -269,15 +484,35 @@ class CaptureManager:
                 raise InvalidState("no recording is active")
             process = self._process
             partial = self._active_path
+            started_wall = self._active_started_wall
             self._state = "stopping"
             self._expected_stop = True
+        exit_code: int | None = None
         if process is not None:
-            self._stop_process(process)
+            exit_code = self._stop_process(process)
+            for thread in self._reader_threads:
+                thread.join(timeout=1)
+        with self._lock:
+            progress = dict(self._progress)
+            warning_counts = dict(self._capture_warning_counts)
         final: Path | None = None
+        qc_status: str | None = None
         error: Exception | None = None
         try:
             final = self._validate_and_finalize(partial)
-        except Exception as exc:  # The partial is deliberately retained on every failure.
+            try:
+                qc_status = self._write_qc_manifest(
+                    final,
+                    exit_code=exit_code,
+                    progress=progress,
+                    warning_counts=warning_counts,
+                    started_wall=started_wall,
+                )
+            except Exception:
+                self._logger.exception("recording saved but QC manifest could not be written")
+                qc_status = "needs_review"
+        except Exception as exc:
+            # The partial is deliberately retained on every validation failure.
             error = exc
         with self._lock:
             if self._process is process:
@@ -286,12 +521,14 @@ class CaptureManager:
             self._active_path = None
             self._active_started_wall = None
             self._progress = {}
+            self._capture_warning_counts = {}
             self._expected_stop = False
             if error:
                 self._state = "error"
                 self._last_error = self._safe_error(str(error))
             else:
                 self._last_completed = final.name if final else None
+                self._last_qc_status = qc_status
                 self._state = "idle"
                 self._last_preview_heartbeat = None
         if error:
@@ -385,6 +622,7 @@ class CaptureManager:
                 else self.settings.audio_device,
                 "last_error": self._last_error,
                 "last_completed": self._last_completed,
+                "last_qc_status": self._last_qc_status,
                 "preview_idle_timeout_seconds": self.settings.preview_idle_timeout_seconds,
                 "preview_idle_remaining_seconds": preview_idle_remaining,
                 "progress": dict(self._progress),

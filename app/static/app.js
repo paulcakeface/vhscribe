@@ -251,14 +251,16 @@ function recordingRow(item) {
   const date = document.createElement('span');
   date.textContent = new Date(item.date).toLocaleString();
   if (item.interrupted) {
-    date.textContent += ' · Interrupted / recoverable';
+    date.textContent += item.recovered ? ' · Recovered copy exists' : ' · Interrupted / recoverable';
     date.className = 'recovery-badge';
   }
   title.append(strong, date);
 
   const meta = document.createElement('div');
   meta.className = 'recording-meta';
-  meta.textContent = `${duration(item.duration_seconds)} · ${bytes(item.size_bytes)}`;
+  const qcLabels = { verified: 'Verified', needs_review: 'Needs review' };
+  const qc = item.qc_status ? ` · ${qcLabels[item.qc_status] || item.qc_status}` : '';
+  meta.textContent = `${duration(item.duration_seconds)} · ${bytes(item.size_bytes)}${qc}`;
 
   const actions = document.createElement('div');
   actions.className = 'recording-actions';

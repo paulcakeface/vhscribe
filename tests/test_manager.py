@@ -261,3 +261,106 @@ def test_stopping_while_idle(tmp_path) -> None:
     manager, _ = manager_for(tmp_path)
     with pytest.raises(InvalidState, match="no recording"):
         manager.stop_recording()
+
+
+def valid_probe_data() -> dict:
+    return {
+        "format": {"duration": "12.5", "size": "12345", "format_name": "matroska,webm"},
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 720,
+                "height": 576,
+                "r_frame_rate": "25/1",
+                "avg_frame_rate": "25/1",
+                "sample_aspect_ratio": "16:15",
+                "display_aspect_ratio": "4:3",
+                "pix_fmt": "yuv420p",
+                "field_order": "progressive",
+            },
+            {
+                "codec_type": "audio",
+                "codec_name": "aac",
+                "sample_rate": "48000",
+                "channels": 2,
+            },
+        ],
+    }
+
+
+def test_finalize_rejects_wrong_master_geometry(tmp_path, monkeypatch) -> None:
+    manager, _ = manager_for(tmp_path)
+    partial = manager.settings.capture_dir / "bad.part.mkv"
+    partial.write_bytes(b"media")
+    probe = valid_probe_data()
+    probe["streams"][0]["width"] = 640
+    monkeypatch.setattr("app.manager.probe_media", lambda _bin, _path: probe)
+
+    with pytest.raises(ValueError, match="geometry"):
+        manager._validate_and_finalize(partial)
+
+    assert partial.exists()
+    assert not final_path_for(partial).exists()
+
+
+def test_stop_recording_writes_qc_manifest_with_checksum(tmp_path, monkeypatch) -> None:
+    manager, _ = manager_for(tmp_path)
+    manager.start_recording("Tape")
+    partial = manager.settings.capture_dir / str(manager.status()["filename"])
+    partial.write_bytes(b"valid test media")
+    manager._state = "recording"
+    monkeypatch.setattr("app.manager.probe_media", lambda _bin, _path: valid_probe_data())
+
+    final = manager.stop_recording()
+    manifest = final.with_name(final.name + ".qc.json")
+
+    assert final.exists()
+    assert manifest.exists()
+    payload = __import__("json").loads(manifest.read_text())
+    assert payload["schema_version"] == 1
+    assert payload["recording"] == final.name
+    assert payload["qc_status"] == "verified"
+    assert payload["sha256"]
+    assert payload["validation"]["geometry"] == "720x576"
+    assert payload["validation"]["frame_rate"] == "25/1"
+    assert payload["validation"]["audio"] == "48000Hz/2ch"
+
+
+def test_stop_recording_marks_capture_drop_as_needs_review(tmp_path, monkeypatch) -> None:
+    manager, _ = manager_for(tmp_path)
+    manager.start_recording("Tape")
+    partial = manager.settings.capture_dir / str(manager.status()["filename"])
+    partial.write_bytes(b"valid test media")
+    manager._state = "recording"
+    manager._progress = {"drop_frames": 3.0, "dup_frames": 0.0}
+    monkeypatch.setattr("app.manager.probe_media", lambda _bin, _path: valid_probe_data())
+
+    final = manager.stop_recording()
+    payload = __import__("json").loads(final.with_name(final.name + ".qc.json").read_text())
+
+    assert payload["qc_status"] == "needs_review"
+    assert payload["progress"]["drop_frames"] == 3.0
+
+
+def test_start_recording_rejected_after_shutdown_begins(tmp_path) -> None:
+    manager, _ = manager_for(tmp_path)
+    manager._shutdown = True
+    with pytest.raises(InvalidState, match="shutting down"):
+        manager.start_recording("Too late")
+
+
+def test_validation_falls_back_to_r_frame_rate_when_average_is_unknown(
+    tmp_path, monkeypatch
+) -> None:
+    manager, _ = manager_for(tmp_path)
+    partial = manager.settings.capture_dir / "valid.part.mkv"
+    partial.write_bytes(b"media")
+    probe = valid_probe_data()
+    probe["streams"][0]["avg_frame_rate"] = "0/0"
+    probe["streams"][0]["r_frame_rate"] = "25/1"
+    monkeypatch.setattr("app.manager.probe_media", lambda _bin, _path: probe)
+
+    final = manager._validate_and_finalize(partial)
+
+    assert final.exists()

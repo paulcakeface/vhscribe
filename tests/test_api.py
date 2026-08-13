@@ -79,3 +79,14 @@ def test_status_reports_unavailable_preview_transport(monkeypatch) -> None:
     assert response["state"] == "error"
     assert response["preview_available"] is False
     assert "MediaMTX" in response["last_error"]
+
+
+def test_recording_file_rejects_non_media_file(tmp_path, monkeypatch) -> None:
+    file = tmp_path / "notes.txt"
+    file.write_text("private capture notes")
+    monkeypatch.setattr(main, "safe_capture_file", lambda _directory, _filename: file)
+
+    with pytest.raises(HTTPException) as exc_info:
+        main.recording_file(file.name)
+
+    assert exc_info.value.status_code == 404

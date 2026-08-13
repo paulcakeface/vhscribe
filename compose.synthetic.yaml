@@ -3,6 +3,7 @@ services:
     devices: !reset []
     environment:
       SYNTHETIC_INPUT: "true"
+      QC_FULL_DECODE: "true"
     volumes:
       - ./test-artifacts/captures:/captures
       - ./logs:/app/logs

@@ -67,3 +67,57 @@ def test_recording_list_metadata(tmp_path, monkeypatch) -> None:
     assert by_name["completed.mkv"]["streams"] == ["video", "audio"]
     assert by_name["interrupted.part.mkv"]["interrupted"] is True
     assert by_name["interrupted.part.mkv"]["recoverable"] is True
+
+
+def test_catalog_hides_recovering_and_marks_preserved_recovered_partial(
+    tmp_path, monkeypatch
+) -> None:
+    partial = tmp_path / "Tape_2026-08-13_07-00-00.part.mkv"
+    completed = tmp_path / "Tape_2026-08-13_07-00-00.mkv"
+    recovering = tmp_path / "Other_2026-08-13_07-00-00.recovering.mkv"
+    partial.write_bytes(b"partial")
+    completed.write_bytes(b"completed")
+    recovering.write_bytes(b"transitional")
+
+    monkeypatch.setattr(
+        "app.recordings.probe_media",
+        lambda _bin, _path: {
+            "format": {"duration": "12.0"},
+            "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
+        },
+    )
+
+    items = RecordingCatalog(tmp_path).list()
+    by_name = {item["filename"]: item for item in items}
+
+    assert recovering.name not in by_name
+    assert by_name[partial.name]["recovered"] is True
+    assert by_name[partial.name]["recoverable"] is False
+
+
+def test_recovery_rejects_audio_less_result_and_removes_transitional_file(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "Tape_2026-08-13_07-00-00.part.mkv"
+    source.write_bytes(b"partial")
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+    monkeypatch.setattr("app.recordings.subprocess.run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr(
+        "app.recordings.probe_media",
+        lambda _bin, _path: {
+            "format": {"duration": "12.0"},
+            "streams": [{"codec_type": "video"}],
+        },
+    )
+
+    catalog = RecordingCatalog(tmp_path)
+    with pytest.raises(ValueError, match="audio"):
+        catalog.recover(source.name)
+
+    assert source.exists()
+    assert not (tmp_path / "Tape_2026-08-13_07-00-00.recovering.mkv").exists()
+    assert not (tmp_path / "Tape_2026-08-13_07-00-00.mkv").exists()

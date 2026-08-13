@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from .config import Settings
 from .devices import discover_devices
 from .manager import CaptureConflict, CaptureManager, InvalidState
-from .recordings import safe_capture_file, sanitize_recording_name
+from .recordings import is_completed_media_path, safe_capture_file, sanitize_recording_name
 
 settings = Settings.from_env()
 manager = CaptureManager(settings)
@@ -183,7 +183,7 @@ def recording_file(filename: str, download: bool = Query(False)) -> FileResponse
         path = safe_capture_file(settings.capture_dir, filename)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid filename") from exc
-    if not path.is_file() or path.name.endswith(".part.mkv"):
+    if not is_completed_media_path(path):
         raise HTTPException(status_code=404, detail="completed recording not found")
     disposition = "attachment" if download else "inline"
     return FileResponse(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -42,6 +43,10 @@ def final_path_for(partial: Path) -> Path:
     return partial.with_name(partial.name[: -len(".part.mkv")] + ".mkv")
 
 
+def qc_manifest_path(media: Path) -> Path:
+    return media.with_name(media.name + ".qc.json")
+
+
 def safe_capture_file(directory: Path, filename: str) -> Path:
     if not filename or Path(filename).name != filename or filename in {".", ".."}:
         raise ValueError("invalid filename")
@@ -52,6 +57,16 @@ def safe_capture_file(directory: Path, filename: str) -> Path:
     return path
 
 
+def is_completed_media_path(path: Path) -> bool:
+    name = path.name.lower()
+    return (
+        path.is_file()
+        and path.suffix.lower() in ALLOWED_MEDIA_SUFFIXES
+        and not name.endswith(".part.mkv")
+        and not name.endswith(".recovering.mkv")
+    )
+
+
 def probe_media(ffprobe_bin: str, path: Path) -> dict[str, Any]:
     result = subprocess.run(
         [
@@ -59,8 +74,10 @@ def probe_media(ffprobe_bin: str, path: Path) -> dict[str, Any]:
             "-v",
             "error",
             "-show_entries",
-            "format=duration,size,bit_rate:stream=index,codec_type,codec_name,width,height,"
-            "r_frame_rate,sample_aspect_ratio,display_aspect_ratio,sample_rate,channels",
+            "format=format_name,duration,size,bit_rate,start_time:"
+            "stream=index,codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,"
+            "sample_aspect_ratio,display_aspect_ratio,field_order,pix_fmt,color_range,color_space,"
+            "color_primaries,color_transfer,time_base,sample_rate,channels,channel_layout,start_time",
             "-of",
             "json",
             str(path),
@@ -77,6 +94,38 @@ def probe_media(ffprobe_bin: str, path: Path) -> dict[str, Any]:
     if not any(item.get("codec_type") == "video" for item in streams):
         raise ValueError("media file has no video stream")
     return data
+
+
+def require_video_and_audio(data: dict[str, Any]) -> None:
+    stream_types = {stream.get("codec_type") for stream in data.get("streams", [])}
+    if "video" not in stream_types:
+        raise ValueError("media file has no video stream")
+    if "audio" not in stream_types:
+        raise ValueError("media file has no audio stream")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    working = path.with_name(path.name + ".tmp")
+    working.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(working, path)
+
+
+def _read_qc_status(media: Path) -> str | None:
+    manifest = qc_manifest_path(media)
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    value = payload.get("qc_status")
+    return str(value) if value else None
 
 
 class RecordingCatalog:
@@ -111,6 +160,8 @@ class RecordingCatalog:
         except (ValueError, subprocess.SubprocessError, json.JSONDecodeError):
             metadata["duration_seconds"] = None
             metadata["streams"] = []
+        if is_completed_media_path(path):
+            metadata["qc_status"] = _read_qc_status(path)
         self._cache[path.name] = (stat.st_mtime_ns, stat.st_size, metadata)
         return metadata
 
@@ -118,13 +169,14 @@ class RecordingCatalog:
         items: list[dict[str, Any]] = []
         with self._lock:
             for path in self.directory.iterdir():
-                if not path.is_file():
+                if not path.is_file() or path.name.lower().endswith(".recovering.mkv"):
                     continue
                 interrupted = path.name.endswith(".part.mkv")
-                if not interrupted and path.suffix.lower() not in ALLOWED_MEDIA_SUFFIXES:
+                if not interrupted and not is_completed_media_path(path):
                     continue
                 stat = path.stat()
                 metadata = self._metadata(path)
+                recovered = interrupted and final_path_for(path).exists()
                 items.append(
                     {
                         "filename": path.name,
@@ -133,7 +185,9 @@ class RecordingCatalog:
                         "duration_seconds": metadata.get("duration_seconds"),
                         "streams": metadata.get("streams", []),
                         "interrupted": interrupted,
-                        "recoverable": interrupted and stat.st_size > 0,
+                        "recoverable": interrupted and stat.st_size > 0 and not recovered,
+                        "recovered": recovered,
+                        "qc_status": metadata.get("qc_status"),
                     }
                 )
         return sorted(items, key=lambda item: item["date"], reverse=True)
@@ -161,6 +215,7 @@ class RecordingCatalog:
                 "-nostdin",
                 "-loglevel",
                 "warning",
+                "-n",
                 "-i",
                 str(source),
                 "-map",
@@ -177,7 +232,13 @@ class RecordingCatalog:
             check=False,
         )
         if result.returncode != 0:
+            working.unlink(missing_ok=True)
             raise RuntimeError("FFmpeg could not remux the interrupted recording")
-        probe_media(self.ffprobe_bin, working)
+        try:
+            data = probe_media(self.ffprobe_bin, working)
+            require_video_and_audio(data)
+        except Exception:
+            working.unlink(missing_ok=True)
+            raise
         os.rename(working, destination)
         return destination

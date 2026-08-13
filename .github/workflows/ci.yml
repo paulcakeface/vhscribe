@@ -111,6 +111,9 @@ jobs:
             -of json "/captures/${filename}")"
           PROBE_JSON="${probe}" python -c \
             'import json,os; s=json.loads(os.environ["PROBE_JSON"])["streams"][0]; assert (s["width"],s["height"],s["display_aspect_ratio"]) == (720,576,"4:3"), s'
+          qc="$(cat "test-artifacts/captures/${filename}.qc.json")"
+          QC_JSON="${qc}" python -c \
+            'import json,os; q=json.loads(os.environ["QC_JSON"]); assert q["qc_status"] == "verified" and q["sha256"] and q["full_decode"] == {"performed": True, "passed": True}, q'
           status="$(curl -fsS http://127.0.0.1:8090/api/status)"
           STATUS_JSON="${status}" python -c \
             'import json,os; s=json.loads(os.environ["STATUS_JSON"]); assert s["state"] == "idle" and not s["process_alive"], s'

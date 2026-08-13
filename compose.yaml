@@ -85,6 +85,8 @@ services:
       SYNTHETIC_INPUT: "false"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       FFMPEG_LOG_LEVEL: ${FFMPEG_LOG_LEVEL:-warning}
+      QC_CHECKSUM: ${QC_CHECKSUM:-true}
+      QC_FULL_DECODE: ${QC_FULL_DECODE:-false}
       TZ: ${TZ:-Etc/UTC}
     ports:
       - "${SERVER_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8090}:8090/tcp"

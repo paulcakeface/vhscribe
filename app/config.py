@@ -64,6 +64,10 @@ class Settings:
     synthetic_input: bool = False
     preview_idle_timeout_seconds: int = 300
     graceful_stop_seconds: float = 30.0
+    qc_checksum: bool = True
+    qc_full_decode: bool = False
+    app_version: str = "dev"
+    vcs_ref: str = "unknown"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -101,4 +105,8 @@ class Settings:
             synthetic_input=_bool("SYNTHETIC_INPUT"),
             preview_idle_timeout_seconds=_integer("PREVIEW_IDLE_TIMEOUT_SECONDS", 300),
             graceful_stop_seconds=float(os.getenv("GRACEFUL_STOP_SECONDS", "30")),
+            qc_checksum=_bool("QC_CHECKSUM", True),
+            qc_full_decode=_bool("QC_FULL_DECODE", False),
+            app_version=os.getenv("VHSCRIBE_VERSION", "dev"),
+            vcs_ref=os.getenv("VHSCRIBE_VCS_REF", "unknown"),
         )

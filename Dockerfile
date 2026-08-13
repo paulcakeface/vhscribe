@@ -13,7 +13,9 @@ LABEL org.opencontainers.image.title="VHScribe" \
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    VHSCRIBE_VERSION=${BUILD_VERSION} \
+    VHSCRIBE_VCS_REF=${VCS_REF}
 
 RUN apt-get update \
     && apt-get upgrade -y \
