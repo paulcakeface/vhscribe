@@ -13,7 +13,10 @@ operational details for a headless host.
 4. Create the capture directory and ensure the operator can write it.
 5. Start with `docker compose up -d --build` and run `./scripts/verify-installation.sh`.
 6. Confirm the dashboard initially reports **Idle**, start and stop preview, then perform a short,
-   non-sensitive test recording and inspect it before beginning a long capture.
+   non-sensitive test recording and inspect both the media and its `.mkv.qc.json` sidecar before
+   beginning a long capture.
+
+By default, successful captures calculate SHA-256 fixity (`QC_CHECKSUM=true`). Full-file decode verification is available with `QC_FULL_DECODE=true`, but it adds substantial finalisation time and is disabled by default.
 
 ## Routine commands
 

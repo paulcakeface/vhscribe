@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Approved SemVer tag (for example v0.1.0)"
+        description: "Approved SemVer tag (for example v0.2.0)"
         required: true
-        default: v0.1.0
+        default: v0.2.0
         type: string
       publish:
         description: "Publish the multi-architecture image to GHCR"

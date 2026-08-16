@@ -59,9 +59,11 @@ configured timeout, preview-only FFmpeg stops gracefully. Heartbeats never gover
 2. FFmpeg writes Matroska clusters frequently so an interrupted file has a better chance of being
    recoverable.
 3. A normal stop sends `SIGINT`, waits for FFmpeg to close the container, and then runs `ffprobe`.
-4. Only a non-empty file containing video and audio is atomically renamed to `*.mkv`.
-5. A failed validation leaves the partial file unchanged.
-6. Manual recovery stream-copies a partial into a separate MKV and preserves the source.
+4. Finalisation requires video and audio, configured geometry/frame rate, expected sample aspect, 4:3 display aspect, configured audio rate/channel count, and positive duration.
+5. Only a valid result is atomically promoted from `*.part.mkv` to `*.mkv`.
+6. VHScribe writes `<recording>.mkv.qc.json` with probe evidence, build/capture provenance, warning counters, optional SHA-256 fixity/full-decode evidence, and `verified` / `needs_review` status.
+7. A hard validation failure leaves the partial file unchanged.
+8. Manual recovery stream-copies through a temporary `.recovering.mkv`, validates video and audio, promotes only a valid result, and preserves the original partial.
 
 ## Video paths
 
@@ -76,7 +78,7 @@ the configured preview resolution. The master never inherits that preview scalin
   mounts are writable.
 - MediaMTX accepts an RTSP publisher only on the internal Compose network; public host mappings are
   limited to its WebRTC player/signaling and media ports.
-- There is no end-user authentication in 0.1.x. Host binds and firewall policy are the access
+- There is no end-user authentication in v0.2.0. Host binds and firewall policy are the access
   control boundary.
 
 ## Design invariants

@@ -22,6 +22,7 @@ control.
 - PAL (720×576 at 25 fps) and NTSC (720×480 at 30000/1001 fps) capture profiles
 - Explicit 4:3 display-aspect signaling without resizing the encoded master
 - Crash-tolerant `.part.mkv` recording and manual, non-destructive recovery
+- Post-capture QC sidecars with exact media checks, warning evidence, build provenance, and optional SHA-256/full-decode verification
 - Read-only device suggestions for V4L2 video and ALSA audio
 - Local Docker Compose deployment with loopback-only defaults
 - Synthetic capture mode for development and CI—no VHS hardware required
@@ -136,6 +137,8 @@ Compose reads the untracked `.env` file in the project directory.
 | `RECORDING_AUDIO_BITRATE` | `128k` | Master AAC bitrate |
 | `AUDIO_RATE` | `48000` | Master audio sample rate |
 | `AUDIO_CHANNELS` | `2` | Audio channel count |
+| `QC_CHECKSUM` | `true` | Add SHA-256 fixity to each successful recording's QC sidecar |
+| `QC_FULL_DECODE` | `false` | Fully decode completed media during QC; stronger but slower |
 | `TZ` | `Etc/UTC` | Container timezone and filename timestamp basis |
 | `LOG_LEVEL` | `INFO` | Application log level |
 | `FFMPEG_LOG_LEVEL` | `warning` | FFmpeg diagnostic verbosity |
@@ -149,9 +152,10 @@ captures.
 1. Rewind and connect the tape deck, select **Start Preview**, then verify video and audio.
 2. Enter a short recording name and select **Start recording**.
 3. VHScribe switches its single FFmpeg process from preview-only mode to recording-plus-preview.
-4. Select **Stop recording**. FFmpeg closes the MKV, `ffprobe` confirms video and audio streams,
-   the `.part.mkv` is atomically renamed to `.mkv`, and capture returns to dormant idle mode.
-5. Play or download the completed file from the recent-recordings list.
+4. Select **Stop recording**. FFmpeg closes the MKV and VHScribe validates video/audio presence, configured geometry and frame rate, sample/display aspect, audio format, and positive duration. A valid `.part.mkv` is atomically promoted to `.mkv`, a `.mkv.qc.json` sidecar is written, and capture returns to dormant idle mode.
+5. Check the recording's **Verified** / **Needs review** QC state, then play or download the media from the recent-recordings list.
+
+`QC_CHECKSUM=true` records SHA-256 fixity in the sidecar. `QC_FULL_DECODE=true` additionally decodes the whole completed recording during finalisation; this is stronger but slower and is disabled by default.
 
 Preview is optional: recording can start directly from idle. A preview-only process stops after the
 configured heartbeat timeout when no visible dashboard is watching. Closing the dashboard never
@@ -173,10 +177,7 @@ upscale the master; preservation processing can be performed later on a copy.
 
 ## Recovering interrupted recordings
 
-If the host or process stops unexpectedly, VHScribe leaves the `.part.mkv` untouched. After the
-service restarts, interrupted items appear in the dashboard with a **Recover** action. Recovery
-stream-copies the existing tracks into a new MKV, validates it, and preserves the original partial
-file. Automatic deletion is deliberately avoided.
+If the host or process stops unexpectedly, VHScribe leaves the `.part.mkv` untouched. After the service restarts, interrupted items appear in the dashboard with a **Recover** action. Recovery stream-copies into a temporary `.recovering.mkv`, requires both video and audio, validates the result, promotes only a valid recovered file, and preserves the original partial. Failed transitional output is removed; the source partial is never silently deleted or overwritten.
 
 ## Security and network access
 
@@ -260,7 +261,9 @@ are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and follow the
 - Optional authentication for broader private networks
 - Better long-running capture metrics and alerts
 - Optional tape-end detection that never risks truncating a recording
-- Exportable capture metadata and preservation checksums
+- Optional FFV1/Matroska lossless archive profile alongside the current H.264/AAC master
+- Evidence-led interlace/field-order handling and long moving-tape A/V drift validation
+- Low-disk reserve policy before long captures begin
 
 ## License
 
